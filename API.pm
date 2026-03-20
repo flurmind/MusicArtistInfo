@@ -267,6 +267,7 @@ sub _initXMAICfgString {
 			}
 		};
 
+		# fallback for older LMS versions where the analytics plugin doesn't have getServerId()
 		if (!$serverId) {
 			# sync with what the analytics plugin does to hash the server ID
 			$serverId = sha1_base64(preferences('server')->get('server_uuid'));
