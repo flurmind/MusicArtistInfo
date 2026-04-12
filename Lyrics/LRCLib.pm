@@ -30,9 +30,9 @@ sub getLyrics {
 
 	return $cb->() unless $args->{artist} && $args->{title};
 
-	my $url = sprintf(GET_URL, uri_escape_utf8($args->{artist}), uri_escape_utf8($args->{title}), uri_escape_utf8($args->{album}), $args->{duration});
-	$url .= '&album_name=' . $args->{album} if $args->{album};
-	$url .= '&duration=' . $args->{duration} if $args->{duration};
+	my $url = sprintf(GET_URL, uri_escape_utf8($args->{artist}), uri_escape_utf8($args->{title}));
+	$url .= '&album_name=' . uri_escape_utf8($args->{album}) if $args->{album};
+	$url .= '&duration=' . uri_escape_utf8($args->{duration}) if $args->{duration};
 
 	_call(
 		$url,
