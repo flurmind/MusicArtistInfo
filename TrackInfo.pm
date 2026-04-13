@@ -118,37 +118,67 @@ sub getSongLyricsCLI {
 		duration => $duration
 	};
 
-	if ($id || $url) {
-		if (defined $id){
-			$args->{track} = Slim::Schema->find('Track', $id);
-		}
-		elsif ($url) {
-			$args->{track} = Slim::Schema->objectForUrl($url);
-		}
+	if (defined $id){
+		$args->{track} = Slim::Schema->find('Track', $id);
+	}
+	elsif ($url) {
+		$args->{track} = Slim::Schema->objectForUrl($url);
+	}
+	elsif ($client) {
+		$args->{track} = Plugins::MusicArtistInfo::Common::getTrackAndRadioUrl($client, $args);
+	}
 
-		if ($args->{track}) {
-			$args->{artist} ||= $args->{track}->artistName;
-			$args->{album}  ||= $args->{track}->albumname;
-			$args->{title}  ||= $args->{track}->title;
-			$args->{duration} = $args->{track}->secs;
+	if ($args->{track}) {
+		$args->{artist} //= $args->{track}->artistName;
+		$args->{album}  //= $args->{track}->albumname;
+		$args->{title}  //= $args->{track}->title;
+		$args->{duration} = $args->{track}->secs;
+		$args->{radioUrl} //= $args->{track}->url if $args->{track}->isRemoteURL;
 
-			if ( $client && !($args->{track} && $args->{artist} && $args->{title} && $args->{duration} && $args->{album}) && $args->{track}->isRemoteURL ) {
-				my $handler = Slim::Player::ProtocolHandlers->handlerForURL($args->{track}->url);
+		if ( $client && !($args->{track} && $args->{artist} && $args->{title} && $args->{duration} && $args->{album}) && $args->{track}->isRemoteURL ) {
+			my $handler = Slim::Player::ProtocolHandlers->handlerForURL($args->{track}->url);
 
-				if ( $handler && $handler->can('getMetadataFor') ) {
-					my $meta = $handler->getMetadataFor( $client, $args->{track}->url );
-					$args->{artist} ||= $meta->{artist};
-					$args->{album}  ||= $meta->{album};
-					$args->{title}  ||= $meta->{title};
-					$args->{duration} ||= $meta->{duration};
-				}
+			if ( $handler && $handler->can('getMetadataFor') ) {
+				my $meta = $handler->getMetadataFor( $client, $args->{track}->url );
+				$args->{artist} //= $meta->{artist};
+				$args->{album}  //= $meta->{album};
+				$args->{title}  //= $meta->{title};
+				$args->{duration} //= $meta->{duration};
 			}
 		}
 	}
 
-	if (!defined $args->{title} || !defined $args->{artist}) {
+	# remove album/duration from radio streams - they're most likely invalid data
+	if ($args->{radioUrl}) {
+		delete $args->{album};
+		delete $args->{duration};
+	}
+
+	# some cleanup... music services add too many appendices
+	$args->{title} =~ s/[([][^)\]]*?(deluxe|edition|remaster|live|anniversary)[^)\]]*?[)\]]//ig;
+	$args->{title} =~ s/ -[^-]*(deluxe|edition|remaster|live|anniversary).*//ig;
+
+	# specific rule for the "[E]"xplicit flag - it's too specific/short to fit in with the above
+	$args->{title} =~ s/\[E\]//g;
+
+	# remove trailing non-word characters
+	$args->{title} =~ s/[\s\W]{2,}$//;
+	$args->{title} =~ s/\s*$//;
+
+	my $killWords = Plugins::MusicArtistInfo::Common::getKillWords() || {};
+	foreach (qw(title artist album)) {
+		delete $args->{$_} if $killWords->{lc($args->{$_} || '')};
+	}
+
+	# Radio Now Playing adds the station after the pipe sign
+	$args->{album} =~ s/\|.*// if $args->{album};
+
+	if (!defined $args->{title} || !defined $args->{artist}
+		|| $args->{title} eq '' || $args->{artist} eq ''
+		|| (length($args->{title}) > 50 && length($args->{artist}) > 50)
+	) {
 		main::INFOLOG && $log->is_info && $log->info("Don't look up lyrics, as we lack track title ('$args->{title}') or artist name ('$args->{artist}').");
-		$request->addResult('error', 'Track or artist information is missing');
+		$request->addResult('error', cstring($client, 'PLUGIN_MUSICARTISTINFO_NOT_FOUND'));
 		$request->setStatusDone();
 		return;
 	}
@@ -165,17 +195,6 @@ sub getSongLyricsCLI {
 		_renderLyricsResponse($lyrics, $request, $args);
 		$request->setStatusDone();
 		return;
-	}
-
-	if ( !($args && $args->{artist} && $args->{title}) ) {
-		$request->addResult('error', cstring($client, 'PLUGIN_MUSICARTISTINFO_NOT_FOUND'));
-		$request->setStatusDone();
-		return;
-	}
-
-	if ( my $track = $args->{track} ) {
-		$args->{album} ||= $track->albumname;
-		$args->{duration} ||= $track->secs;
 	}
 
 	_fetchLyrics($args, sub {
@@ -282,28 +301,6 @@ my $lyricsProvider = {
 
 sub _fetchLyrics {
 	my ($args, $cb, $ecb) = @_;
-
-	if (length($args->{title}) > 50 && length($args->{artist}) > 50) {
-		main::INFOLOG && $log->is_info && $log->info("Not looking up lyrics for very long title or artist");
-		$cb->({});
-		return;
-	}
-
-	# some cleanup... music services add too many appendices
-	$args->{title} =~ s/[([][^)\]]*?(deluxe|edition|remaster|live|anniversary)[^)\]]*?[)\]]//ig;
-	$args->{title} =~ s/ -[^-]*(deluxe|edition|remaster|live|anniversary).*//ig;
-
-	# specific rule for the "[E]"xplicit flag - it's too specific/short to fit in with the above
-	$args->{title} =~ s/\[E\]//g;
-
-	# remove trailing non-word characters
-	$args->{title} =~ s/[\s\W]{2,}$//;
-	$args->{title} =~ s/\s*$//;
-
-	if ($args->{album}) {
-		my $killWords = Plugins::MusicArtistInfo::Common::getKillWords();
-		$args->{album} = '' if $killWords && ref $killWords && $killWords->{lc($args->{album})};
-	}
 
 	my $lyricsResult;
 
@@ -488,7 +485,7 @@ sub _renderLyricsResponse {
 	$lyrics =~ s/\n\r/\n/g;
 	$lyrics =~ s/\r/\n/g;
 
-	$lyrics = Plugins::MusicArtistInfo::Parser::LRC->strip($lyrics, $request->getParam('timestamps'));
+	$lyrics = Plugins::MusicArtistInfo::Parser::LRC->strip($lyrics, $request->getParam('timestamps') && !$args->{radioUrl});
 
 	$request->addResult('lyrics', $lyrics) if $lyrics;
 	$request->addResult('error', cstring($client, 'PLUGIN_MUSICARTISTINFO_NOT_FOUND')) unless $lyrics;

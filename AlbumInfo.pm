@@ -384,13 +384,12 @@ sub getAlbumReviewCLI {
 		};
 
 	# try to find track information if we don't have an album title
-	if ( $args->{artist} && !$args->{album} && !$args->{title} && $client ) {
-		my $track = Slim::Player::Playlist::track($client);
+	if ( $args->{artist} && !$args->{album} && !$args->{title} ) {
+		my $track = Plugins::MusicArtistInfo::Common::getTrackAndRadioUrl($client, $args);
 
 		if ( $track && $track->isRemoteURL ) {
 			if ( my $meta = Plugins::MusicArtistInfo::Common::getMetadataFor($client, $track) ) {
 				$args->{title} = _cleanupAlbumName($meta->{title});
-				$args->{radioUrl} = $track->url;
 			}
 		}
 	}

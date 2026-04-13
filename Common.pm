@@ -178,6 +178,19 @@ sub getMetadataFor {
 	return {};
 }
 
+sub getTrackAndRadioUrl {
+	my ($client, $args) = @_;
+
+	$args ||= {};
+	return unless $args->{track} || $client;
+
+	my $track = $args->{track} || Slim::Player::Playlist::track($client);
+
+	$args->{radioUrl} = $track->url if $track && $track->isRemoteURL;
+
+	return $track;
+}
+
 my @HEADER_DATA = map {
 	# s/=*$|\s//sg;
 	MIME::Base64::decode_base64($_);
