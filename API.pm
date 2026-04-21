@@ -32,6 +32,8 @@ my $xMAICfgString;
 my $version;
 my $hitRateLimit;
 
+my %queryQueue;
+
 if (!main::SCANNER) {
 	$prefs->setChange(sub { _initXMAICfgString(1) },
 		'browseArtistPictures',
@@ -251,8 +253,14 @@ sub _call {
 		}
 	}
 
+	$queryQueue{$url} ||= [];
+	push @{$queryQueue{$url}}, $cb;
+
+	# no need to do the http request if we're already fetching it
+	return if scalar @{ $queryQueue{$url} } > 1;
+
 	Plugins::MusicArtistInfo::Common->call($url, sub {
-		my ($result) = @_;
+		my ($result, @moreResults) = @_;
 
 		if ($result && ref $result && ref $result eq 'HASH' && $result->{error}) {
 			my $error = delete $result->{error};
@@ -261,7 +269,11 @@ sub _call {
 			$hitRateLimit = 1 if $error =~ /rate limit|\b429\b/i;
 		}
 
-		$cb->(@_);
+		while ( my $cb = shift @{ $queryQueue{$url} }) {
+			$cb->($result, @moreResults);
+		}
+
+		delete $queryQueue{$url} if @{$queryQueue{$url}} == 0;
 	}, $args);
 }
 
